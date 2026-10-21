@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SWV Controller</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --card: #f3f4f6; --line: #d0d4da;
+    --accent: #2563eb; --fwd: #16a34a; --rev: #dc2626; --ok: #16a34a; --bad: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111315; --fg: #eceef0; --muted: #9aa0a6; --card: #1c1f23; --line: #343a41;
+      --accent: #60a5fa; --fwd: #4ade80; --rev: #f87171; --ok: #4ade80; --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top, 0px) 14px env(safe-area-inset-bottom, 0px);
+  }
+  h1 { font-size: 1.25rem; margin: 14px 0 10px; }
+  .card { background: var(--card); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg); flex: 1 1 auto;
+  }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .45; }
+  #state { font-weight: 600; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); margin-right: 6px; }
+  .dot.on { background: var(--ok); }
+  #bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  #barfill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
+  #countdown { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; }
+  canvas { width: 100%; height: 300px; display: block; background: var(--bg); border-radius: 8px; }
+  label { color: var(--muted); font-size: .9rem; }
+  #log { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); max-height: 120px; overflow-y: auto; white-space: pre-wrap; }
+  .small { color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>SWV Controller</h1>
+
+<div class="card">
+  <div class="row">
+    <button id="connectBtn" class="primary">Connect</button>
+    <button id="startBtn" disabled>Start run</button>
+  </div>
+  <p style="margin:10px 0 0"><span class="dot" id="dot"></span><span id="state">Not connected</span></p>
+  <div id="countdown"></div>
+  <div id="bar" hidden><div id="barfill"></div></div>
+</div>
+
+<div class="card">
+  <canvas id="plot"></canvas>
+  <div class="row" style="margin-top:8px">
+    <label><input type="checkbox" id="showFR"> Show forward / reverse</label>
+    <span class="small" id="count">0 points</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="saveBtn" disabled>Save / share CSV</button>
+    <button id="copyBtn" disabled>Copy CSV</button>
+    <button id="clearBtn">Clear</button>
+  </div>
+</div>
+
+<div class="card"><div id="log"></div></div>
+
+<script>
+const NUS      = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // write to device
+const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notifications from device
+const GEN_TOTAL_S = 300;                                  // must match the sketch (5 min)
+
+const $ = id => document.getElementById(id);
+let device = null, rxChar = null, txChar = null, wakeLock = null;
+let data = [];            // [mV, net_uA, fwd_uA, rev_uA]
+let rxBuffer = "";
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+// ---------- UI helpers ----------
+function setState(text, connected) {
+  $("state").textContent = text;
+  $("dot").classList.toggle("on", !!connected);
+}
+function log(msg) {
+  const el = $("log");
+  el.textContent += msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+function setConnectedUI(on) {
+  $("startBtn").disabled = !on;
+  $("connectBtn").textContent = on ? "Disconnect" : "Connect";
+}
+
+// ---------- Bluetooth ----------
+async function connect() {
+  if (!navigator.bluetooth) {
+    setState("Web Bluetooth unavailable. Open this page in Bluefy.", false);
+    return;
+  }
+  try {
+    setState("Scanning…", false);
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [NUS] }],
+      optionalServices: [NUS]
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(NUS);
+    rxChar = await svc.getCharacteristic(NUS_RX);
+    txChar = await svc.getCharacteristic(NUS_TX);
+    txChar.addEventListener("characteristicvaluechanged", onNotify);
+    await txChar.startNotifications();
+    setState("Connected to " + (device.name || "device"), true);
+    setConnectedUI(true);
+    requestWakeLock();
+  } catch (err) {
+    setState("Connection failed: " + err.message, false);
+    setConnectedUI(false);
+  }
+}
+function disconnect() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+}
+function onDisconnected() {
+  setState("Disconnected", false);
+  setConnectedUI(false);
+  releaseWakeLock();
+}
+async function sendCommand(text) {
+  const bytes = encoder.encode(text);
+  try {
+    await rxChar.writeValueWithoutResponse(bytes);
+  } catch (_) {
+    await rxChar.writeValue(bytes);
+  }
+}
+async function requestWakeLock() {
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+}
+function releaseWakeLock() {
+  try { if (wakeLock) wakeLock.release(); } catch (_) {}
+  wakeLock = null;
+}
+
+// ---------- Incoming data ----------
+function onNotify(ev) {
+  rxBuffer += decoder.decode(ev.target.value.buffer, { stream: true });
+  let idx;
+  while ((idx = rxBuffer.indexOf("\n")) >= 0) {
+    const line = rxBuffer.slice(0, idx).trim();
+    rxBuffer = rxBuffer.slice(idx + 1);
+    if (line) handleLine(line);
+  }
+}
+function handleLine(line) {
+  if (line.startsWith("#")) {
+    handleStatus(line.replace(/^#\s*/, ""));
+    return;
+  }
+  const parts = line.split(",").map(Number);
+  if (parts.length === 4 && parts.every(Number.isFinite)) {
+    data.push(parts);
+    $("count").textContent = data.length + " points";
+    $("saveBtn").disabled = $("copyBtn").disabled = false;
+    scheduleDraw();
+  } else {
+    log(line);
+  }
+}
+function handleStatus(msg) {
+  log(msg);
+  const m = msg.match(/generator remaining s:\s*(\d+)/);
+  if (m) {
+    const s = parseInt(m[1], 10);
+    $("countdown").textContent = "Generator: " +
+      String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0") + " remaining";
+    $("bar").hidden = false;
+    $("barfill").style.width = (100 * (1 - s / GEN_TOTAL_S)) + "%";
+    setState("Generator running", true);
+  } else if (msg.startsWith("START received")) {
+    setState("Starting…", true);
+  } else if (msg.startsWith("GENERATOR OFF")) {
+    $("barfill").style.width = "100%";
+  } else if (msg.startsWith("STARTING SWV")) {
+    $("countdown").textContent = "Scanning…";
+    setState("Running SWV", true);
+  } else if (msg.startsWith("DONE")) {
+    $("countdown").textContent = "Done";
+    $("bar").hidden = true;
+    setState("Finished", true);
+    $("startBtn").disabled = false;
+  } else if (msg.startsWith("TIMEOUT")) {
+    setState("Timed out waiting for the Pico", true);
+    $("startBtn").disabled = false;
+  } else if (msg.startsWith("READY")) {
+    if ($("state").textContent !== "Finished") setState("Ready", true);
+  }
+}
+
+// ---------- Plot ----------
+let drawQueued = false;
+function scheduleDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; draw(); });
+}
+function niceTicks(min, max, n = 5) {
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step0 = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const norm = step0 / mag;
+  const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const start = Math.ceil(min / step) * step;
+  const ticks = [];
+  for (let v = start; v <= max + step * 1e-6; v += step) ticks.push(v);
+  return ticks;
+}
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function draw() {
+  const canvas = $("plot");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const fg = cssVar("--fg"), muted = cssVar("--muted"), line = cssVar("--line");
+  const m = { l: 54, r: 10, t: 10, b: 36 };
+  const pw = w - m.l - m.r, ph = h - m.t - m.b;
+
+  const showFR = $("showFR").checked;
+  const ys = [];
+  for (const d of data) { ys.push(d[1]); if (showFR) ys.push(d[2], d[3]); }
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const d of data) { xmin = Math.min(xmin, d[0]); xmax = Math.max(xmax, d[0]); }
+  for (const y of ys) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+  if (!data.length) { xmin = -500; xmax = 500; ymin = -1; ymax = 1; }
+  const ypad = (ymax - ymin) * 0.08 || 0.5;
+  ymin -= ypad; ymax += ypad;
+  if (xmin === xmax) { xmin -= 1; xmax += 1; }
+
+  const X = v => m.l + (v - xmin) / (xmax - xmin) * pw;
+  const Y = v => m.t + (1 - (v - ymin) / (ymax - ymin)) * ph;
+
+  ctx.font = "11px -apple-system, system-ui, sans-serif";
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = line; ctx.fillStyle = muted;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (const t of niceTicks(xmin, xmax, 5)) {
+    ctx.beginPath(); ctx.moveTo(X(t), m.t); ctx.lineTo(X(t), m.t + ph); ctx.stroke();
+    ctx.fillText(String(Math.round(t * 100) / 100), X(t), m.t + ph + 4);
+  }
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (const t of niceTicks(ymin, ymax, 5)) {
+    ctx.beginPath(); ctx.moveTo(m.l, Y(t)); ctx.lineTo(m.l + pw, Y(t)); ctx.stroke();
+    ctx.fillText(String(Math.round(t * 1000) / 1000), m.l - 6, Y(t));
+  }
+  ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  ctx.fillText("Potential (mV)", m.l + pw / 2, h - 2);
+  ctx.save(); ctx.translate(12, m.t + ph / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textBaseline = "top"; ctx.fillText("Current (µA)", 0, 0); ctx.restore();
+
+  function series(idx, color, width) {
+    if (!data.length) return;
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath();
+    data.forEach((d, i) => (i ? ctx.lineTo(X(d[0]), Y(d[idx])) : ctx.moveTo(X(d[0]), Y(d[idx]))));
+    ctx.stroke();
+  }
+  if (showFR) { series(2, cssVar("--fwd"), 1.2); series(3, cssVar("--rev"), 1.2); }
+  series(1, cssVar("--accent"), 2);
+}
+
+// ---------- Export ----------
+function csvText() {
+  return "potential_mV,net_current_uA,forward_current_uA,reverse_current_uA\n" +
+    data.map(r => r.join(",")).join("\n") + "\n";
+}
+function csvName() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `swv_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+}
+async function saveCsv() {
+  const name = csvName();
+  const file = new File([csvText()], name, { type: "text/csv" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: name });
+      return;
+    }
+  } catch (_) { /* user cancelled or share unsupported - fall through */ }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function copyCsv() {
+  try { await navigator.clipboard.writeText(csvText()); log("CSV copied to clipboard"); }
+  catch (e) { log("Copy failed: " + e.message); }
+}
+
+// ---------- Wiring ----------
+$("connectBtn").addEventListener("click", () => (device && device.gatt.connected ? disconnect() : connect()));
+$("startBtn").addEventListener("click", async () => {
+  if (data.length && !confirm("Clear the existing data and start a new run?")) return;
+  data = []; $("count").textContent = "0 points";
+  $("saveBtn").disabled = $("copyBtn").disabled = true;
+  draw();
+  $("startBtn").disabled = true;
+  try { await sendCommand("START\n"); setState("Starting…", true); }
+  catch (e) { setState("Send failed: " + e.message, true); $("startBtn").disabled = false; }
+});
+$("saveBtn").addEventListener("click", saveCsv);
+$("copyBtn").addEventListener("click", copyCsv);
+$("clearBtn").addEventListener("click", () => {
+  data = []; $("count").textContent = "0 points";
+  $("saveBtn").disabled = $("copyBtn").disabled = true; draw();
+});
+$("showFR").addEventListener("change", draw);
+window.addEventListener("resize", draw);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && device && device.gatt.connected) requestWakeLock();
+});
+draw();
+</script>
+</body>
+</html>
