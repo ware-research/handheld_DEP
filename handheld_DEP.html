@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SWV Controller</title>
+<title>DEP Monitor</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --card: #f3f4f6; --line: #d0d4da;
-    --accent: #2563eb; --fwd: #16a34a; --rev: #dc2626; --ok: #16a34a; --bad: #dc2626;
+    --accent: #2563eb; --band: #f59e0b; --ok: #16a34a; --bad: #dc2626;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #111315; --fg: #eceef0; --muted: #9aa0a6; --card: #1c1f23; --line: #343a41;
-      --accent: #60a5fa; --fwd: #4ade80; --rev: #f87171; --ok: #4ade80; --bad: #f87171;
+      --accent: #60a5fa; --band: #fbbf24; --ok: #4ade80; --bad: #f87171;
     }
   }
   * { box-sizing: border-box; }
@@ -22,94 +22,176 @@
     padding: env(safe-area-inset-top, 0px) 14px env(safe-area-inset-bottom, 0px);
   }
   h1 { font-size: 1.25rem; margin: 14px 0 10px; }
+  h2 { font-size: 1rem; margin: 14px 0 6px; color: var(--muted); font-weight: 600; }
   .card { background: var(--card); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  button {
-    font: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--fg); flex: 1 1 auto;
+  button, select, input {
+    font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg);
   }
+  button { flex: 1 1 auto; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
   button:disabled { opacity: .45; }
-  #state { font-weight: 600; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button { border-radius: 10px; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); margin-right: 6px; }
   .dot.on { background: var(--ok); }
+  #state { font-weight: 600; }
+  #stage { font-size: 1.3rem; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
   #bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
   #barfill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
-  #countdown { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; }
   canvas { width: 100%; height: 300px; display: block; background: var(--bg); border-radius: 8px; }
-  label { color: var(--muted); font-size: .9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
   #log { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); max-height: 120px; overflow-y: auto; white-space: pre-wrap; }
   .small { color: var(--muted); font-size: .85rem; }
+  .field { display: grid; grid-template-columns: 1fr 110px 40px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .field:last-child { border-bottom: none; }
+  .field input { width: 100%; text-align: right; }
+  .field .unit { color: var(--muted); font-size: .9rem; }
+  .field .help { grid-column: 1 / -1; color: var(--muted); font-size: .8rem; margin-top: -4px; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<h1>SWV Controller</h1>
+<h1>DEP Monitor</h1>
 
 <div class="card">
   <div class="row">
     <button id="connectBtn" class="primary">Connect</button>
-    <button id="startBtn" disabled>Start run</button>
   </div>
   <p style="margin:10px 0 0"><span class="dot" id="dot"></span><span id="state">Not connected</span></p>
-  <div id="countdown"></div>
-  <div id="bar" hidden><div id="barfill"></div></div>
 </div>
 
-<div class="card">
-  <canvas id="plot"></canvas>
-  <div class="row" style="margin-top:8px">
-    <label><input type="checkbox" id="showFR"> Show forward / reverse</label>
-    <span class="small" id="count">0 points</span>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <button id="saveBtn" disabled>Save / share CSV</button>
-    <button id="copyBtn" disabled>Copy CSV</button>
-    <button id="clearBtn">Clear</button>
-  </div>
+<div class="tabs">
+  <button id="tabRun" class="active">Run</button>
+  <button id="tabSettings">Settings</button>
 </div>
 
-<div class="card"><div id="log"></div></div>
+<!-- ============ RUN TAB ============ -->
+<section id="runPane">
+  <div class="card">
+    <div class="row">
+      <button id="startBtn" class="primary" disabled>Start run</button>
+      <button id="stopBtn" class="danger" disabled>Stop</button>
+    </div>
+    <div id="stage">Idle</div>
+    <div id="bar"><div id="barfill"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <label class="small" for="metric">Plot:</label>
+      <select id="metric">
+        <option value="R">Resistance</option>
+        <option value="dR">Change in resistance (%)</option>
+        <option value="I">Current</option>
+      </select>
+      <span class="small" id="count">0 points</span>
+    </div>
+    <canvas id="plot"></canvas>
+    <p class="small" style="margin:6px 0 0">Shaded bands show when DEP was on.</p>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Time (s)</th><th>I (µA)</th><th>R</th><th>ΔR</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="row" style="margin-top:10px">
+      <button id="saveBtn" disabled>Save / share CSV</button>
+      <button id="copyBtn" disabled>Copy CSV</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+  <div class="card"><div id="log"></div></div>
+</section>
+
+<!-- ============ SETTINGS TAB ============ -->
+<section id="settingsPane" hidden>
+  <div class="card">
+    <div class="row">
+      <button id="readBtn" disabled>Read from device</button>
+      <button id="sendBtn" class="primary" disabled>Send to device</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="defaultsBtn" disabled>Reset to defaults</button>
+    </div>
+    <p class="small" id="settingsMsg" style="margin:8px 0 0"></p>
+  </div>
+
+  <div class="card">
+    <div id="fieldsMain"></div>
+    <h2>Measurement (advanced)</h2>
+    <div id="fieldsAdv"></div>
+    <p class="small" id="estimate" style="margin:10px 0 0"></p>
+  </div>
+</section>
 
 <script>
-const NUS      = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // write to device
-const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notifications from device
-const GEN_TOTAL_S = 300;                                  // must match the sketch (5 min)
+const NUS    = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";   // write to device
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";   // notifications from device
+
+// Must match the parameter table in the sketch.
+const PARAMS = [
+  { key: "cycles",   label: "DEP cycles",                      unit: "",   min: 1, max: 50,      def: 6,    group: "main", help: "Number of DEP + measurement repeats." },
+  { key: "dep_s",    label: "DEP duration",                    unit: "s",  min: 1, max: 600,     def: 10,   group: "main", help: "Time the function generator is on each cycle." },
+  { key: "settle_s", label: "Settling time after DEP",         unit: "s",  min: 0, max: 60,      def: 1,    group: "main", help: "Generator off, then wait this long before measuring." },
+  { key: "pre_s",    label: "Delay before baseline",           unit: "s",  min: 0, max: 600,     def: 0,    group: "main", help: "Time to let the sample settle before the first measurement." },
+  { key: "e_mv",     label: "Measurement potential",           unit: "mV", min: 1, max: 500,     def: 50,   group: "adv",  help: "Small DC bias used to measure resistance (R = E / I). Keep low to limit electrolysis." },
+  { key: "run_ms",   label: "Measurement duration",            unit: "ms", min: 100, max: 20000, def: 1000, group: "adv",  help: "Length of each chronoamperometry trace." },
+  { key: "int_ms",   label: "Sampling interval",               unit: "ms", min: 10, max: 5000,   def: 50,   group: "adv",  help: "Time between current samples." },
+  { key: "avg_pct",  label: "Averaging window (end of trace)", unit: "%",  min: 10, max: 100,    def: 50,   group: "adv",  help: "Current is averaged over this last part of the trace to skip the charging transient." },
+  { key: "rmin_nA",  label: "Min current range",               unit: "nA", min: 1, max: 1000000, def: 100,  group: "adv",  help: "Autorange lower limit. Must be a range the Pico supports." },
+  { key: "rmax_uA",  label: "Max current range",               unit: "µA", min: 1, max: 5000,    def: 1000, group: "adv",  help: "Autorange upper limit. Must be a range the Pico supports." },
+];
+const values = {};
+PARAMS.forEach(p => values[p.key] = p.def);
 
 const $ = id => document.getElementById(id);
-let device = null, rxChar = null, txChar = null, wakeLock = null;
-let data = [];            // [mV, net_uA, fwd_uA, rev_uA]
-let rxBuffer = "";
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
+const enc = new TextEncoder(), dec = new TextDecoder();
+let device = null, rxChar = null, txChar = null, wakeLock = null, rxBuffer = "";
 
-// ---------- UI helpers ----------
-function setState(text, connected) {
-  $("state").textContent = text;
-  $("dot").classList.toggle("on", !!connected);
+let results = [];      // {idx, t, I, R, n}
+let deps = [];         // {k, s, e}  e = null while running
+let run = { active: false, cycles: 0, depDur: 0, stageText: "Idle", stageEnd: 0, stageKind: "" };
+
+// ---------- helpers ----------
+function log(msg) { const el = $("log"); el.textContent += msg + "\n"; el.scrollTop = el.scrollHeight; }
+function setState(text, on) { $("state").textContent = text; $("dot").classList.toggle("on", !!on); }
+function connected() { return device && device.gatt.connected; }
+function fmtR(r) {
+  if (!(r > 0)) return "–";
+  if (r >= 1e6) return (r / 1e6).toFixed(3) + " MΩ";
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + " kΩ";
+  return r.toFixed(1) + " Ω";
 }
-function log(msg) {
-  const el = $("log");
-  el.textContent += msg + "\n";
-  el.scrollTop = el.scrollHeight;
+function fmtClock(s) {
+  s = Math.max(0, Math.round(s));
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
 }
-function setConnectedUI(on) {
-  $("startBtn").disabled = !on;
-  $("connectBtn").textContent = on ? "Disconnect" : "Connect";
+function updateButtons() {
+  const c = connected(), r = run.active;
+  $("startBtn").disabled = !c || r;
+  $("stopBtn").disabled = !c || !r;
+  $("readBtn").disabled = !c || r;
+  $("sendBtn").disabled = !c || r;
+  $("defaultsBtn").disabled = !c || r;
+  $("connectBtn").textContent = c ? "Disconnect" : "Connect";
 }
 
 // ---------- Bluetooth ----------
 async function connect() {
-  if (!navigator.bluetooth) {
-    setState("Web Bluetooth unavailable. Open this page in Bluefy.", false);
-    return;
-  }
+  if (!navigator.bluetooth) { setState("Web Bluetooth unavailable. Open this page in Bluefy.", false); return; }
   try {
     setState("Scanning…", false);
-    device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [NUS] }],
-      optionalServices: [NUS]
-    });
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }], optionalServices: [NUS] });
     device.addEventListener("gattserverdisconnected", onDisconnected);
     const server = await device.gatt.connect();
     const svc = await server.getPrimaryService(NUS);
@@ -118,112 +200,114 @@ async function connect() {
     txChar.addEventListener("characteristicvaluechanged", onNotify);
     await txChar.startNotifications();
     setState("Connected to " + (device.name || "device"), true);
-    setConnectedUI(true);
+    updateButtons();
     requestWakeLock();
+    await send("GET\n");                        // load current settings from the device
   } catch (err) {
     setState("Connection failed: " + err.message, false);
-    setConnectedUI(false);
+    updateButtons();
   }
-}
-function disconnect() {
-  if (device && device.gatt.connected) device.gatt.disconnect();
 }
 function onDisconnected() {
   setState("Disconnected", false);
-  setConnectedUI(false);
+  if (run.active) { run.active = false; setStage("Connection lost during run"); }
+  updateButtons();
   releaseWakeLock();
 }
-async function sendCommand(text) {
-  const bytes = encoder.encode(text);
-  try {
-    await rxChar.writeValueWithoutResponse(bytes);
-  } catch (_) {
-    await rxChar.writeValue(bytes);
-  }
+async function send(text) {
+  const bytes = enc.encode(text);
+  try { await rxChar.writeValueWithoutResponse(bytes); }
+  catch (_) { await rxChar.writeValue(bytes); }
 }
-async function requestWakeLock() {
-  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
-}
-function releaseWakeLock() {
-  try { if (wakeLock) wakeLock.release(); } catch (_) {}
-  wakeLock = null;
-}
+async function requestWakeLock() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {} }
+function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch (_) {} wakeLock = null; }
 
-// ---------- Incoming data ----------
+// ---------- Incoming messages ----------
 function onNotify(ev) {
-  rxBuffer += decoder.decode(ev.target.value.buffer, { stream: true });
-  let idx;
-  while ((idx = rxBuffer.indexOf("\n")) >= 0) {
-    const line = rxBuffer.slice(0, idx).trim();
-    rxBuffer = rxBuffer.slice(idx + 1);
+  rxBuffer += dec.decode(ev.target.value.buffer, { stream: true });
+  let i;
+  while ((i = rxBuffer.indexOf("\n")) >= 0) {
+    const line = rxBuffer.slice(0, i).trim();
+    rxBuffer = rxBuffer.slice(i + 1);
     if (line) handleLine(line);
   }
 }
-function handleLine(line) {
-  if (line.startsWith("#")) {
-    handleStatus(line.replace(/^#\s*/, ""));
-    return;
-  }
-  const parts = line.split(",").map(Number);
-  if (parts.length === 4 && parts.every(Number.isFinite)) {
-    data.push(parts);
-    $("count").textContent = data.length + " points";
-    $("saveBtn").disabled = $("copyBtn").disabled = false;
-    scheduleDraw();
-  } else {
-    log(line);
-  }
+function setStage(text, durSec, kind) {
+  run.stageText = text;
+  run.stageKind = kind || "";
+  run.stageEnd = durSec ? Date.now() + durSec * 1000 : 0;
+  renderStage();
 }
-function handleStatus(msg) {
-  log(msg);
-  const m = msg.match(/generator remaining s:\s*(\d+)/);
-  if (m) {
-    const s = parseInt(m[1], 10);
-    $("countdown").textContent = "Generator: " +
-      String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0") + " remaining";
-    $("bar").hidden = false;
-    $("barfill").style.width = (100 * (1 - s / GEN_TOTAL_S)) + "%";
-    setState("Generator running", true);
-  } else if (msg.startsWith("START received")) {
-    setState("Starting…", true);
-  } else if (msg.startsWith("GENERATOR OFF")) {
-    $("barfill").style.width = "100%";
-  } else if (msg.startsWith("STARTING SWV")) {
-    $("countdown").textContent = "Scanning…";
-    setState("Running SWV", true);
-  } else if (msg.startsWith("DONE")) {
-    $("countdown").textContent = "Done";
-    $("bar").hidden = true;
-    setState("Finished", true);
-    $("startBtn").disabled = false;
-  } else if (msg.startsWith("TIMEOUT")) {
-    setState("Timed out waiting for the Pico", true);
-    $("startBtn").disabled = false;
-  } else if (msg.startsWith("READY")) {
-    if ($("state").textContent !== "Finished") setState("Ready", true);
+function renderStage() {
+  let t = run.stageText;
+  if (run.stageEnd) t += " – " + fmtClock((run.stageEnd - Date.now()) / 1000) + " left";
+  $("stage").textContent = t;
+}
+function handleLine(line) {
+  const parts = line.split(/\s+/);
+  const tag = parts[0];
+  switch (tag) {
+    case "#": log(line.replace(/^#\s*/, "")); break;
+    case "PAR": setValue(parts[1], Number(parts[2])); break;
+    case "RUNSTART":
+      results = []; deps = [];
+      run.active = true; run.cycles = +parts[1]; run.depDur = +parts[2];
+      $("barfill").style.width = "0%";
+      setState("Running", true); setStage("Starting…");
+      updateButtons(); renderResults(); draw();
+      break;
+    case "STAGE":
+      if (parts[1] === "wait")        setStage("Waiting before baseline", +parts[2], "wait");
+      else if (parts[1] === "measure") setStage(+parts[2] === 0 ? "Baseline measurement" : `Measurement ${parts[2]} of ${run.cycles}`, 0, "measure");
+      else if (parts[1] === "dep") {
+        deps.push({ k: +parts[2], s: +parts[4], e: null });
+        setStage(`DEP ${parts[2]} of ${run.cycles}`, +parts[3], "dep");
+      }
+      else if (parts[1] === "settle")  setStage(`Settling ${parts[2]} of ${run.cycles}`, +parts[3], "settle");
+      break;
+    case "DEP": {
+      const d = deps.find(x => x.k === +parts[1]);
+      if (d) { d.s = +parts[2]; d.e = +parts[3]; } else deps.push({ k: +parts[1], s: +parts[2], e: +parts[3] });
+      draw();
+      break;
+    }
+    case "RES":
+      results.push({ idx: +parts[1], t: +parts[2], I: +parts[3], R: +parts[4], n: +parts[5] });
+      $("barfill").style.width = (100 * results.length / (run.cycles + 1)) + "%";
+      renderResults(); draw();
+      break;
+    case "DONE":
+      run.active = false; setStage("Done"); setState("Finished", true); updateButtons(); draw(); break;
+    case "ABORTED":
+      run.active = false; setStage("Aborted"); setState("Aborted", true); updateButtons(); draw(); break;
+    default: log(line);
   }
 }
 
-// ---------- Plot ----------
-let drawQueued = false;
-function scheduleDraw() {
-  if (drawQueued) return;
-  drawQueued = true;
-  requestAnimationFrame(() => { drawQueued = false; draw(); });
+// ---------- Results ----------
+function deltaPct(r) {
+  const base = results.length ? results[0].R : 0;
+  return base > 0 && r.R > 0 ? (r.R - base) / base * 100 : NaN;
 }
+function renderResults() {
+  $("count").textContent = results.length + (results.length === 1 ? " point" : " points");
+  $("rows").innerHTML = results.map(r => {
+    const d = deltaPct(r);
+    return `<tr><td>${r.idx === 0 ? "base" : r.idx}</td><td>${r.t.toFixed(1)}</td><td>${r.I.toFixed(3)}</td><td>${fmtR(r.R)}</td><td>${Number.isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(1) + "%" : "–"}</td></tr>`;
+  }).join("");
+  $("saveBtn").disabled = $("copyBtn").disabled = results.length === 0;
+}
+
+// ---------- Plot ----------
 function niceTicks(min, max, n = 5) {
   if (min === max) { min -= 1; max += 1; }
-  const span = max - min;
-  const step0 = span / n;
-  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
-  const norm = step0 / mag;
+  const step0 = (max - min) / n, mag = Math.pow(10, Math.floor(Math.log10(step0))), norm = step0 / mag;
   const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
-  const start = Math.ceil(min / step) * step;
-  const ticks = [];
-  for (let v = start; v <= max + step * 1e-6; v += step) ticks.push(v);
-  return ticks;
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-6; v += step) out.push(v);
+  return out;
 }
-function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function draw() {
   const canvas = $("plot");
@@ -234,31 +318,57 @@ function draw() {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
 
-  const fg = cssVar("--fg"), muted = cssVar("--muted"), line = cssVar("--line");
-  const m = { l: 54, r: 10, t: 10, b: 36 };
+  const fg = cssVar("--fg"), muted = cssVar("--muted"), grid = cssVar("--line");
+  const accent = cssVar("--accent"), band = cssVar("--band");
+  const m = { l: 58, r: 12, t: 12, b: 38 };
   const pw = w - m.l - m.r, ph = h - m.t - m.b;
 
-  const showFR = $("showFR").checked;
-  const ys = [];
-  for (const d of data) { ys.push(d[1]); if (showFR) ys.push(d[2], d[3]); }
-  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-  for (const d of data) { xmin = Math.min(xmin, d[0]); xmax = Math.max(xmax, d[0]); }
-  for (const y of ys) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
-  if (!data.length) { xmin = -500; xmax = 500; ymin = -1; ymax = 1; }
-  const ypad = (ymax - ymin) * 0.08 || 0.5;
-  ymin -= ypad; ymax += ypad;
-  if (xmin === xmax) { xmin -= 1; xmax += 1; }
+  const metric = $("metric").value;
+  let ys = [], yLabel = "", yFmt = v => String(v);
+  if (metric === "R") {
+    const maxR = Math.max(0, ...results.map(r => r.R));
+    const [div, unit] = maxR >= 1e6 ? [1e6, "MΩ"] : maxR >= 1e3 ? [1e3, "kΩ"] : [1, "Ω"];
+    ys = results.map(r => r.R > 0 ? r.R / div : NaN);
+    yLabel = `Resistance (${unit})`;
+  } else if (metric === "dR") {
+    ys = results.map(deltaPct);
+    yLabel = "Change in resistance (%)";
+  } else {
+    ys = results.map(r => r.I);
+    yLabel = "Current (µA)";
+  }
+  const xs = results.map(r => r.t);
+
+  const nowRel = results.length || deps.length ? Math.max(...xs, ...deps.map(d => d.e ?? d.s), 0) : 0;
+  const openDep = deps.find(d => d.e === null);
+  let xmax = Math.max(nowRel, ...xs, 1);
+  if (openDep && run.active) xmax = Math.max(xmax, openDep.s + run.depDur);
+  let xmin = 0;
+
+  const fin = ys.filter(Number.isFinite);
+  let ymin = fin.length ? Math.min(...fin) : 0, ymax = fin.length ? Math.max(...fin) : 1;
+  if (metric === "dR") { ymin = Math.min(ymin, 0); ymax = Math.max(ymax, 0); }
+  const pad = (ymax - ymin) * 0.12 || Math.abs(ymax) * 0.1 || 1;
+  ymin -= pad; ymax += pad;
 
   const X = v => m.l + (v - xmin) / (xmax - xmin) * pw;
   const Y = v => m.t + (1 - (v - ymin) / (ymax - ymin)) * ph;
 
+  // DEP bands
+  ctx.fillStyle = band; ctx.globalAlpha = 0.22;
+  for (const d of deps) {
+    const end = d.e ?? Math.min(d.s + run.depDur, d.s + (Date.now() - run.depStartMs) / 1000 || d.s);
+    ctx.fillRect(X(d.s), m.t, Math.max(1, X(end) - X(d.s)), ph);
+  }
+  ctx.globalAlpha = 1;
+
+  // grid + ticks
   ctx.font = "11px -apple-system, system-ui, sans-serif";
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = line; ctx.fillStyle = muted;
+  ctx.lineWidth = 1; ctx.strokeStyle = grid; ctx.fillStyle = muted;
   ctx.textAlign = "center"; ctx.textBaseline = "top";
   for (const t of niceTicks(xmin, xmax, 5)) {
     ctx.beginPath(); ctx.moveTo(X(t), m.t); ctx.lineTo(X(t), m.t + ph); ctx.stroke();
-    ctx.fillText(String(Math.round(t * 100) / 100), X(t), m.t + ph + 4);
+    ctx.fillText(String(Math.round(t * 10) / 10), X(t), m.t + ph + 4);
   }
   ctx.textAlign = "right"; ctx.textBaseline = "middle";
   for (const t of niceTicks(ymin, ymax, 5)) {
@@ -266,42 +376,43 @@ function draw() {
     ctx.fillText(String(Math.round(t * 1000) / 1000), m.l - 6, Y(t));
   }
   ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-  ctx.fillText("Potential (mV)", m.l + pw / 2, h - 2);
+  ctx.fillText("Time (s)", m.l + pw / 2, h - 2);
   ctx.save(); ctx.translate(12, m.t + ph / 2); ctx.rotate(-Math.PI / 2);
-  ctx.textBaseline = "top"; ctx.fillText("Current (µA)", 0, 0); ctx.restore();
+  ctx.textBaseline = "top"; ctx.fillText(yLabel, 0, 0); ctx.restore();
 
-  function series(idx, color, width) {
-    if (!data.length) return;
-    ctx.strokeStyle = color; ctx.lineWidth = width;
-    ctx.beginPath();
-    data.forEach((d, i) => (i ? ctx.lineTo(X(d[0]), Y(d[idx])) : ctx.moveTo(X(d[0]), Y(d[idx]))));
-    ctx.stroke();
-  }
-  if (showFR) { series(2, cssVar("--fwd"), 1.2); series(3, cssVar("--rev"), 1.2); }
-  series(1, cssVar("--accent"), 2);
+  // data
+  ctx.strokeStyle = accent; ctx.fillStyle = accent; ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  results.forEach((r, i) => {
+    if (!Number.isFinite(ys[i])) return;
+    if (!started) { ctx.moveTo(X(xs[i]), Y(ys[i])); started = true; } else ctx.lineTo(X(xs[i]), Y(ys[i]));
+  });
+  ctx.stroke();
+  results.forEach((r, i) => {
+    if (!Number.isFinite(ys[i])) return;
+    ctx.beginPath(); ctx.arc(X(xs[i]), Y(ys[i]), 4, 0, Math.PI * 2); ctx.fill();
+  });
 }
 
 // ---------- Export ----------
 function csvText() {
-  return "potential_mV,net_current_uA,forward_current_uA,reverse_current_uA\n" +
-    data.map(r => r.join(",")).join("\n") + "\n";
+  const base = results.length ? results[0].R : 0;
+  const rows = results.map(r => [r.idx, r.t, r.I, r.R, base > 0 && r.R > 0 ? ((r.R - base) / base * 100).toFixed(3) : ""].join(","));
+  return "measurement,time_s,current_uA,resistance_ohm,delta_R_pct\n" + rows.join("\n") + "\n";
 }
 function csvName() {
   const d = new Date(), p = n => String(n).padStart(2, "0");
-  return `swv_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+  return `dep_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
 }
 async function saveCsv() {
   const name = csvName();
   const file = new File([csvText()], name, { type: "text/csv" });
   try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: name });
-      return;
-    }
-  } catch (_) { /* user cancelled or share unsupported - fall through */ }
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+  } catch (_) {}
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(file);
-  a.download = name;
+  a.href = URL.createObjectURL(file); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
 }
 async function copyCsv() {
@@ -309,28 +420,94 @@ async function copyCsv() {
   catch (e) { log("Copy failed: " + e.message); }
 }
 
-// ---------- Wiring ----------
-$("connectBtn").addEventListener("click", () => (device && device.gatt.connected ? disconnect() : connect()));
+// ---------- Settings tab ----------
+function buildFields() {
+  for (const p of PARAMS) {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    wrap.innerHTML = `<label for="f_${p.key}">${p.label}</label>
+      <input id="f_${p.key}" type="number" inputmode="numeric" min="${p.min}" max="${p.max}" step="1" value="${p.def}">
+      <span class="unit">${p.unit}</span>
+      <span class="help">${p.help} (${p.min}–${p.max})</span>`;
+    (p.group === "main" ? $("fieldsMain") : $("fieldsAdv")).appendChild(wrap);
+    wrap.querySelector("input").addEventListener("input", e => {
+      const v = parseInt(e.target.value, 10);
+      if (Number.isFinite(v)) values[p.key] = v;
+      updateEstimate();
+    });
+  }
+  updateEstimate();
+}
+function setValue(key, v) {
+  if (!(key in values) || !Number.isFinite(v)) return;
+  values[key] = v;
+  const el = $("f_" + key);
+  if (el) el.value = v;
+  updateEstimate();
+}
+function updateEstimate() {
+  const v = values;
+  const perMeas = v.run_ms / 1000 + 2;            // ~2 s of script overhead per measurement
+  const total = v.pre_s + (v.cycles + 1) * perMeas + v.cycles * (v.dep_s + v.settle_s);
+  $("estimate").textContent = `Estimated run time ≈ ${fmtClock(total)} (${v.cycles + 1} measurements, ${v.cycles} × ${v.dep_s} s DEP).`;
+}
+function readInputs() {
+  const out = {};
+  for (const p of PARAMS) {
+    let v = parseInt($("f_" + p.key).value, 10);
+    if (!Number.isFinite(v)) v = p.def;
+    v = Math.min(p.max, Math.max(p.min, v));
+    out[p.key] = v;
+    $("f_" + p.key).value = v;
+  }
+  return out;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function sendSettings() {
+  const vals = readInputs();
+  $("settingsMsg").textContent = "Sending…";
+  try {
+    for (const p of PARAMS) { await send(`SET ${p.key} ${vals[p.key]}\n`); await sleep(120); }
+    $("settingsMsg").textContent = "Settings saved to the device.";
+  } catch (e) { $("settingsMsg").textContent = "Send failed: " + e.message; }
+}
+
+// ---------- Tabs & wiring ----------
+function showTab(name) {
+  $("runPane").hidden = name !== "run";
+  $("settingsPane").hidden = name !== "settings";
+  $("tabRun").classList.toggle("active", name === "run");
+  $("tabSettings").classList.toggle("active", name === "settings");
+  if (name === "run") draw();
+}
+$("tabRun").addEventListener("click", () => showTab("run"));
+$("tabSettings").addEventListener("click", () => showTab("settings"));
+$("connectBtn").addEventListener("click", () => (connected() ? device.gatt.disconnect() : connect()));
 $("startBtn").addEventListener("click", async () => {
-  if (data.length && !confirm("Clear the existing data and start a new run?")) return;
-  data = []; $("count").textContent = "0 points";
-  $("saveBtn").disabled = $("copyBtn").disabled = true;
-  draw();
-  $("startBtn").disabled = true;
-  try { await sendCommand("START\n"); setState("Starting…", true); }
-  catch (e) { setState("Send failed: " + e.message, true); $("startBtn").disabled = false; }
+  if (results.length && !confirm("Clear the existing data and start a new run?")) return;
+  results = []; deps = []; renderResults(); draw();
+  try { await send("START\n"); setStage("Starting…"); } catch (e) { setState("Send failed: " + e.message, true); }
 });
+$("stopBtn").addEventListener("click", async () => { try { await send("STOP\n"); } catch (_) {} });
+$("readBtn").addEventListener("click", async () => { $("settingsMsg").textContent = "Reading…"; await send("GET\n"); setTimeout(() => $("settingsMsg").textContent = "Loaded from device.", 600); });
+$("sendBtn").addEventListener("click", sendSettings);
+$("defaultsBtn").addEventListener("click", async () => { await send("DEFAULTS\n"); $("settingsMsg").textContent = "Defaults restored."; });
 $("saveBtn").addEventListener("click", saveCsv);
 $("copyBtn").addEventListener("click", copyCsv);
-$("clearBtn").addEventListener("click", () => {
-  data = []; $("count").textContent = "0 points";
-  $("saveBtn").disabled = $("copyBtn").disabled = true; draw();
-});
-$("showFR").addEventListener("change", draw);
+$("clearBtn").addEventListener("click", () => { results = []; deps = []; renderResults(); draw(); });
+$("metric").addEventListener("change", draw);
 window.addEventListener("resize", draw);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && device && device.gatt.connected) requestWakeLock();
-});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && connected()) requestWakeLock(); });
+
+// Countdown + growing DEP band
+setInterval(() => {
+  if (run.stageEnd) renderStage();
+  if (run.stageKind === "dep") draw();
+}, 500);
+
+buildFields();
+renderResults();
+updateButtons();
 draw();
 </script>
 </body>
