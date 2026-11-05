@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>DEP Monitor</title>
+<title>AC Impedance Monitor</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --card: #f3f4f6; --line: #d0d4da;
@@ -34,7 +34,6 @@
   button.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
   button:disabled { opacity: .45; }
   .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-  .tabs button { border-radius: 10px; }
   .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); margin-right: 6px; }
   .dot.on { background: var(--ok); }
@@ -42,23 +41,32 @@
   #stage { font-size: 1.3rem; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
   #bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
   #barfill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
+  .readout { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .readout div { background: var(--bg); border-radius: 10px; padding: 8px 10px; }
+  .readout .lbl { color: var(--muted); font-size: .8rem; }
+  .readout .val { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .live { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+  .live label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 2px; }
+  .live input { width: 100%; text-align: right; }
   canvas { width: 100%; height: 300px; display: block; background: var(--bg); border-radius: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
   th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--muted); font-weight: 600; }
+  tr.clip td { color: var(--bad); }
   #log { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); max-height: 120px; overflow-y: auto; white-space: pre-wrap; }
   .small { color: var(--muted); font-size: .85rem; }
-  .field { display: grid; grid-template-columns: 1fr 110px 40px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .warn { color: var(--bad); font-size: .85rem; }
+  .field { display: grid; grid-template-columns: 1fr 130px 40px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .field:last-child { border-bottom: none; }
-  .field input { width: 100%; text-align: right; }
+  .field input, .field select { width: 100%; text-align: right; }
   .field .unit { color: var(--muted); font-size: .9rem; }
   .field .help { grid-column: 1 / -1; color: var(--muted); font-size: .8rem; margin-top: -4px; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<h1>DEP Monitor</h1>
+<h1>AC Impedance Monitor</h1>
 
 <div class="card">
   <div class="row">
@@ -76,32 +84,59 @@
 <section id="runPane">
   <div class="card">
     <div class="row">
-      <button id="startBtn" class="primary" disabled>Start run</button>
+      <button id="startBtn" class="primary" disabled>Start output</button>
       <button id="stopBtn" class="danger" disabled>Stop</button>
     </div>
     <div id="stage">Idle</div>
     <div id="bar"><div id="barfill"></div></div>
+    <p class="warn" style="margin:8px 0 0">Output is up to 10 Vpp while running. Check the sample connection before starting.</p>
+  </div>
+
+  <div class="card">
+    <div class="readout">
+      <div><div class="lbl">|Z|</div><div class="val" id="roZ">–</div></div>
+      <div><div class="lbl">Phase (I vs V)</div><div class="val" id="roPh">–</div></div>
+      <div><div class="lbl">Current (peak)</div><div class="val" id="roI">–</div></div>
+      <div><div class="lbl">Frequency / amplitude</div><div class="val" id="roF">–</div></div>
+    </div>
+    <p class="warn" id="clipMsg" style="margin:8px 0 0" hidden>Current input is saturating. Use a lower feedback resistance (higher current range).</p>
+  </div>
+
+  <div class="card">
+    <div class="live">
+      <div><label for="liveF">Frequency (Hz)</label><input id="liveF" type="number" inputmode="numeric" step="1"></div>
+      <div><label for="liveA">Amplitude (mVpp)</label><input id="liveA" type="number" inputmode="numeric" step="100"></div>
+      <button id="applyBtn" disabled>Apply</button>
+    </div>
+    <p class="small" style="margin:8px 0 0">Changes apply live during a run, with no break in measurement.</p>
   </div>
 
   <div class="card">
     <div class="row" style="margin-bottom:8px">
       <label class="small" for="metric">Plot:</label>
       <select id="metric">
-        <option value="R">Resistance</option>
-        <option value="dR">Change in resistance (%)</option>
-        <option value="I">Current</option>
+        <option value="Z">Impedance |Z|</option>
+        <option value="P">Phase</option>
+        <option value="I">Current (peak)</option>
+        <option value="F">Frequency</option>
+      </select>
+      <select id="span">
+        <option value="0">All data</option>
+        <option value="30">Last 30 s</option>
+        <option value="120">Last 2 min</option>
+        <option value="600">Last 10 min</option>
       </select>
       <span class="small" id="count">0 points</span>
     </div>
     <canvas id="plot"></canvas>
-    <p class="small" style="margin:6px 0 0">Shaded bands show when DEP was on.</p>
   </div>
 
   <div class="card">
     <table>
-      <thead><tr><th>#</th><th>Time (s)</th><th>I (µA)</th><th>R</th><th>ΔR</th></tr></thead>
+      <thead><tr><th>#</th><th>t (s)</th><th>f (Hz)</th><th>I (µA)</th><th>|Z|</th><th>φ (°)</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
+    <p class="small" style="margin:6px 0 0">Showing the 8 most recent. The CSV contains everything.</p>
     <div class="row" style="margin-top:10px">
       <button id="saveBtn" disabled>Save / share CSV</button>
       <button id="copyBtn" disabled>Copy CSV</button>
@@ -138,48 +173,62 @@ const NUS    = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";   // write to device
 const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";   // notifications from device
 
-// Must match the parameter table in the sketch.
+// Feedback-resistor ranges. Must match the table in the PSoC firmware (0 = autorange).
+const RANGES = [
+  { v: 0, label: "Auto" },
+  { v: 1, label: "1 MΩ" },
+  { v: 2, label: "100 kΩ" },
+  { v: 3, label: "10 kΩ" },
+  { v: 4, label: "1 kΩ" },
+  { v: 5, label: "100 Ω" },
+];
+
+// Must match the parameter table in the firmware.
 const PARAMS = [
-  { key: "cycles",   label: "DEP cycles",                      unit: "",   min: 1, max: 50,      def: 6,    group: "main", help: "Number of DEP + measurement repeats." },
-  { key: "dep_s",    label: "DEP duration",                    unit: "s",  min: 1, max: 600,     def: 10,   group: "main", help: "Time the function generator is on each cycle." },
-  { key: "settle_s", label: "Settling time after DEP",         unit: "s",  min: 0, max: 60,      def: 1,    group: "main", help: "Generator off, then wait this long before measuring." },
-  { key: "pre_s",    label: "Delay before baseline",           unit: "s",  min: 0, max: 600,     def: 0,    group: "main", help: "Time to let the sample settle before the first measurement." },
-  { key: "e_mv",     label: "Measurement potential",           unit: "mV", min: 1, max: 500,     def: 50,   group: "adv",  help: "Small DC bias used to measure resistance (R = E / I). Keep low to limit electrolysis." },
-  { key: "run_ms",   label: "Measurement duration",            unit: "ms", min: 100, max: 20000, def: 1000, group: "adv",  help: "Length of each chronoamperometry trace." },
-  { key: "int_ms",   label: "Sampling interval",               unit: "ms", min: 10, max: 5000,   def: 50,   group: "adv",  help: "Time between current samples." },
-  { key: "avg_pct",  label: "Averaging window (end of trace)", unit: "%",  min: 10, max: 100,    def: 50,   group: "adv",  help: "Current is averaged over this last part of the trace to skip the charging transient." },
-  { key: "rmin_nA",  label: "Min current range",               unit: "nA", min: 1, max: 1000000, def: 100,  group: "adv",  help: "Autorange lower limit. Must be a range the Pico supports." },
-  { key: "rmax_uA",  label: "Max current range",               unit: "µA", min: 1, max: 5000,    def: 1000, group: "adv",  help: "Autorange upper limit. Must be a range the Pico supports." },
+  { key: "freq_hz", label: "Frequency",           unit: "Hz",  min: 1000, max: 100000, def: 1000, group: "main", help: "Sine frequency." },
+  { key: "amp_mv",  label: "Amplitude (peak-to-peak)", unit: "mV", min: 5000, max: 10000, def: 5000, group: "main", help: "Output swing, centered on 0 V." },
+  { key: "dur_s",   label: "Run duration",        unit: "s",   min: 0, max: 86400,      def: 0,    group: "main", help: "0 = run until Stop is pressed." },
+  { key: "win_ms",  label: "Measurement window",  unit: "ms",  min: 10, max: 10000,     def: 100,  group: "adv",  help: "Lock-in integration time per reported point. The firmware rounds to a whole number of sine cycles. Longer = less noise, slower updates." },
+  { key: "range",   label: "Current range",       unit: "",    min: 0, max: RANGES.length - 1, def: 0, group: "adv", options: RANGES, help: "Transimpedance feedback resistor. Auto picks the best range from the signal level." },
 ];
 const values = {};
 PARAMS.forEach(p => values[p.key] = p.def);
 
+const MAX_POINTS = 20000;
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder(), dec = new TextDecoder();
 let device = null, rxChar = null, txChar = null, wakeLock = null, rxBuffer = "";
 
-let results = [];      // {idx, t, I, R, n}
-let deps = [];         // {k, s, e}  e = null while running
-let run = { active: false, cycles: 0, depDur: 0, stageText: "Idle", stageEnd: 0, stageKind: "" };
+let results = [];      // {idx, t, f, vpp, ipk, ph, rng, clip}   vpp in V, ipk in µA, ph in degrees
+let run = { active: false, dur: 0 };
 
 // ---------- helpers ----------
 function log(msg) { const el = $("log"); el.textContent += msg + "\n"; el.scrollTop = el.scrollHeight; }
 function setState(text, on) { $("state").textContent = text; $("dot").classList.toggle("on", !!on); }
 function connected() { return device && device.gatt.connected; }
-function fmtR(r) {
-  if (!(r > 0)) return "–";
-  if (r >= 1e6) return (r / 1e6).toFixed(3) + " MΩ";
-  if (r >= 1e3) return (r / 1e3).toFixed(2) + " kΩ";
-  return r.toFixed(1) + " Ω";
+const zOf = r => (r.ipk > 0 ? (r.vpp / 2) / (r.ipk * 1e-6) : NaN);
+function fmtZ(z) {
+  if (!(z > 0)) return "–";
+  if (z >= 1e6) return (z / 1e6).toFixed(3) + " MΩ";
+  if (z >= 1e3) return (z / 1e3).toFixed(2) + " kΩ";
+  return z.toFixed(1) + " Ω";
+}
+function fmtI(uA) {
+  if (!Number.isFinite(uA)) return "–";
+  if (uA >= 1000) return (uA / 1000).toFixed(2) + " mA";
+  if (uA >= 1) return uA.toFixed(2) + " µA";
+  return (uA * 1000).toFixed(1) + " nA";
 }
 function fmtClock(s) {
   s = Math.max(0, Math.round(s));
-  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return (h ? String(h).padStart(2, "0") + ":" : "") + String(m).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
 }
 function updateButtons() {
   const c = connected(), r = run.active;
   $("startBtn").disabled = !c || r;
   $("stopBtn").disabled = !c || !r;
+  $("applyBtn").disabled = !c;
   $("readBtn").disabled = !c || r;
   $("sendBtn").disabled = !c || r;
   $("defaultsBtn").disabled = !c || r;
@@ -202,7 +251,7 @@ async function connect() {
     setState("Connected to " + (device.name || "device"), true);
     updateButtons();
     requestWakeLock();
-    await send("GET\n");                        // load current settings from the device
+    await send("GET\n");
   } catch (err) {
     setState("Connection failed: " + err.message, false);
     updateButtons();
@@ -214,17 +263,27 @@ function onDisconnected() {
   updateButtons();
   releaseWakeLock();
 }
+// Split into <=20-byte chunks so it works with the default BLE MTU.
 async function send(text) {
   const bytes = enc.encode(text);
-  try { await rxChar.writeValueWithoutResponse(bytes); }
-  catch (_) { await rxChar.writeValue(bytes); }
+  for (let i = 0; i < bytes.length; i += 20) {
+    const chunk = bytes.slice(i, i + 20);
+    try { await rxChar.writeValueWithoutResponse(chunk); }
+    catch (_) { await rxChar.writeValue(chunk); }
+  }
 }
 async function requestWakeLock() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {} }
 function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch (_) {} wakeLock = null; }
 
 // ---------- Incoming messages ----------
+// Device -> host lines:
+//   # text
+//   PAR <key> <value>
+//   RUNSTART
+//   RES <idx> <t_s> <freq_hz> <vpp_mv> <ipk_uA> <phase_deg> <range> <clip 0/1>
+//   DONE | ABORTED
 function onNotify(ev) {
-  rxBuffer += dec.decode(ev.target.value.buffer, { stream: true });
+  rxBuffer += dec.decode(ev.target.value, { stream: true });
   let i;
   while ((i = rxBuffer.indexOf("\n")) >= 0) {
     const line = rxBuffer.slice(0, i).trim();
@@ -232,69 +291,48 @@ function onNotify(ev) {
     if (line) handleLine(line);
   }
 }
-function setStage(text, durSec, kind) {
-  run.stageText = text;
-  run.stageKind = kind || "";
-  run.stageEnd = durSec ? Date.now() + durSec * 1000 : 0;
-  renderStage();
-}
-function renderStage() {
-  let t = run.stageText;
-  if (run.stageEnd) t += " – " + fmtClock((run.stageEnd - Date.now()) / 1000) + " left";
-  $("stage").textContent = t;
-}
+function setStage(text) { $("stage").textContent = text; }
 function handleLine(line) {
   const parts = line.split(/\s+/);
-  const tag = parts[0];
-  switch (tag) {
+  switch (parts[0]) {
     case "#": log(line.replace(/^#\s*/, "")); break;
     case "PAR": setValue(parts[1], Number(parts[2])); break;
     case "RUNSTART":
-      results = []; deps = [];
-      run.active = true; run.cycles = +parts[1]; run.depDur = +parts[2];
+      results = [];
+      run.active = true; run.dur = values.dur_s;
       $("barfill").style.width = "0%";
-      setState("Running", true); setStage("Starting…");
+      setState("Running", true); setStage("Running – 00:00");
       updateButtons(); renderResults(); draw();
       break;
-    case "STAGE":
-      if (parts[1] === "wait")        setStage("Waiting before baseline", +parts[2], "wait");
-      else if (parts[1] === "measure") setStage(+parts[2] === 0 ? "Baseline measurement" : `Measurement ${parts[2]} of ${run.cycles}`, 0, "measure");
-      else if (parts[1] === "dep") {
-        deps.push({ k: +parts[2], s: +parts[4], e: null });
-        setStage(`DEP ${parts[2]} of ${run.cycles}`, +parts[3], "dep");
-      }
-      else if (parts[1] === "settle")  setStage(`Settling ${parts[2]} of ${run.cycles}`, +parts[3], "settle");
-      break;
-    case "DEP": {
-      const d = deps.find(x => x.k === +parts[1]);
-      if (d) { d.s = +parts[2]; d.e = +parts[3]; } else deps.push({ k: +parts[1], s: +parts[2], e: +parts[3] });
-      draw();
-      break;
-    }
-    case "RES":
-      results.push({ idx: +parts[1], t: +parts[2], I: +parts[3], R: +parts[4], n: +parts[5] });
-      $("barfill").style.width = (100 * results.length / (run.cycles + 1)) + "%";
+    case "RES": {
+      const r = { idx: +parts[1], t: +parts[2], f: +parts[3], vpp: +parts[4] / 1000, ipk: +parts[5], ph: +parts[6], rng: +parts[7], clip: +parts[8] === 1 };
+      results.push(r);
+      if (results.length > MAX_POINTS) results.shift();
+      setStage("Running – " + fmtClock(r.t));
+      if (run.dur > 0) $("barfill").style.width = Math.min(100, 100 * r.t / run.dur) + "%";
       renderResults(); draw();
       break;
-    case "DONE":
-      run.active = false; setStage("Done"); setState("Finished", true); updateButtons(); draw(); break;
-    case "ABORTED":
-      run.active = false; setStage("Aborted"); setState("Aborted", true); updateButtons(); draw(); break;
+    }
+    case "DONE":    run.active = false; setStage("Done");    setState("Finished", true); updateButtons(); break;
+    case "ABORTED": run.active = false; setStage("Stopped"); setState("Stopped", true);  updateButtons(); break;
     default: log(line);
   }
 }
 
 // ---------- Results ----------
-function deltaPct(r) {
-  const base = results.length ? results[0].R : 0;
-  return base > 0 && r.R > 0 ? (r.R - base) / base * 100 : NaN;
-}
 function renderResults() {
   $("count").textContent = results.length + (results.length === 1 ? " point" : " points");
-  $("rows").innerHTML = results.map(r => {
-    const d = deltaPct(r);
-    return `<tr><td>${r.idx === 0 ? "base" : r.idx}</td><td>${r.t.toFixed(1)}</td><td>${r.I.toFixed(3)}</td><td>${fmtR(r.R)}</td><td>${Number.isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(1) + "%" : "–"}</td></tr>`;
-  }).join("");
+  const last = results[results.length - 1];
+  if (last) {
+    $("roZ").textContent = fmtZ(zOf(last));
+    $("roPh").textContent = Number.isFinite(last.ph) ? last.ph.toFixed(1) + "°" : "–";
+    $("roI").textContent = fmtI(last.ipk);
+    $("roF").textContent = (last.f >= 1000 ? (last.f / 1000).toFixed(last.f % 1000 ? 2 : 0) + " kHz" : last.f + " Hz") + " / " + last.vpp.toFixed(1) + " Vpp";
+    $("clipMsg").hidden = !last.clip;
+  }
+  $("rows").innerHTML = results.slice(-8).reverse().map(r =>
+    `<tr class="${r.clip ? "clip" : ""}"><td>${r.idx}</td><td>${r.t.toFixed(1)}</td><td>${r.f}</td><td>${r.ipk.toFixed(3)}</td><td>${fmtZ(zOf(r))}</td><td>${r.ph.toFixed(1)}</td></tr>`
+  ).join("");
   $("saveBtn").disabled = $("copyBtn").disabled = results.length === 0;
 }
 
@@ -308,8 +346,13 @@ function niceTicks(min, max, n = 5) {
   return out;
 }
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-
+let drawPending = false;
 function draw() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; drawNow(); });
+}
+function drawNow() {
   const canvas = $("plot");
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -319,50 +362,39 @@ function draw() {
   ctx.clearRect(0, 0, w, h);
 
   const fg = cssVar("--fg"), muted = cssVar("--muted"), grid = cssVar("--line");
-  const accent = cssVar("--accent"), band = cssVar("--band");
+  const accent = cssVar("--accent"), bad = cssVar("--bad");
   const m = { l: 58, r: 12, t: 12, b: 38 };
   const pw = w - m.l - m.r, ph = h - m.t - m.b;
 
-  const metric = $("metric").value;
-  let ys = [], yLabel = "", yFmt = v => String(v);
-  if (metric === "R") {
-    const maxR = Math.max(0, ...results.map(r => r.R));
-    const [div, unit] = maxR >= 1e6 ? [1e6, "MΩ"] : maxR >= 1e3 ? [1e3, "kΩ"] : [1, "Ω"];
-    ys = results.map(r => r.R > 0 ? r.R / div : NaN);
-    yLabel = `Resistance (${unit})`;
-  } else if (metric === "dR") {
-    ys = results.map(deltaPct);
-    yLabel = "Change in resistance (%)";
-  } else {
-    ys = results.map(r => r.I);
-    yLabel = "Current (µA)";
-  }
-  const xs = results.map(r => r.t);
+  // visible slice
+  const span = +$("span").value;
+  const tEnd = results.length ? results[results.length - 1].t : 0;
+  const vis = span > 0 ? results.filter(r => r.t >= tEnd - span) : results;
 
-  const nowRel = results.length || deps.length ? Math.max(...xs, ...deps.map(d => d.e ?? d.s), 0) : 0;
-  const openDep = deps.find(d => d.e === null);
-  let xmax = Math.max(nowRel, ...xs, 1);
-  if (openDep && run.active) xmax = Math.max(xmax, openDep.s + run.depDur);
-  let xmin = 0;
+  const metric = $("metric").value;
+  let ys = [], yLabel = "";
+  if (metric === "Z") {
+    const zs = vis.map(zOf).filter(Number.isFinite);
+    const maxZ = zs.length ? Math.max(...zs) : 0;
+    const [div, unit] = maxZ >= 1e6 ? [1e6, "MΩ"] : maxZ >= 1e3 ? [1e3, "kΩ"] : [1, "Ω"];
+    ys = vis.map(r => zOf(r) / div); yLabel = `|Z| (${unit})`;
+  } else if (metric === "P") { ys = vis.map(r => r.ph); yLabel = "Phase (°)"; }
+  else if (metric === "I")   { ys = vis.map(r => r.ipk); yLabel = "Peak current (µA)"; }
+  else                       { ys = vis.map(r => r.f / 1000); yLabel = "Frequency (kHz)"; }
+  const xs = vis.map(r => r.t);
+
+  let xmin = xs.length ? xs[0] : 0, xmax = xs.length ? xs[xs.length - 1] : 1;
+  if (span > 0) { xmax = Math.max(xmax, span); xmin = xmax - span; }
+  if (xmax - xmin < 1) xmax = xmin + 1;
 
   const fin = ys.filter(Number.isFinite);
   let ymin = fin.length ? Math.min(...fin) : 0, ymax = fin.length ? Math.max(...fin) : 1;
-  if (metric === "dR") { ymin = Math.min(ymin, 0); ymax = Math.max(ymax, 0); }
   const pad = (ymax - ymin) * 0.12 || Math.abs(ymax) * 0.1 || 1;
   ymin -= pad; ymax += pad;
 
   const X = v => m.l + (v - xmin) / (xmax - xmin) * pw;
   const Y = v => m.t + (1 - (v - ymin) / (ymax - ymin)) * ph;
 
-  // DEP bands
-  ctx.fillStyle = band; ctx.globalAlpha = 0.22;
-  for (const d of deps) {
-    const end = d.e ?? Math.min(d.s + run.depDur, d.s + (Date.now() - run.depStartMs) / 1000 || d.s);
-    ctx.fillRect(X(d.s), m.t, Math.max(1, X(end) - X(d.s)), ph);
-  }
-  ctx.globalAlpha = 1;
-
-  // grid + ticks
   ctx.font = "11px -apple-system, system-ui, sans-serif";
   ctx.lineWidth = 1; ctx.strokeStyle = grid; ctx.fillStyle = muted;
   ctx.textAlign = "center"; ctx.textBaseline = "top";
@@ -380,30 +412,34 @@ function draw() {
   ctx.save(); ctx.translate(12, m.t + ph / 2); ctx.rotate(-Math.PI / 2);
   ctx.textBaseline = "top"; ctx.fillText(yLabel, 0, 0); ctx.restore();
 
-  // data
-  ctx.strokeStyle = accent; ctx.fillStyle = accent; ctx.lineWidth = 2;
-  ctx.beginPath();
+  // data: line, with larger dots only when sparse; saturated points in red
+  ctx.save();
+  ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
+  ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.beginPath();
   let started = false;
-  results.forEach((r, i) => {
-    if (!Number.isFinite(ys[i])) return;
+  for (let i = 0; i < vis.length; i++) {
+    if (!Number.isFinite(ys[i])) { started = false; continue; }
     if (!started) { ctx.moveTo(X(xs[i]), Y(ys[i])); started = true; } else ctx.lineTo(X(xs[i]), Y(ys[i]));
-  });
+  }
   ctx.stroke();
-  results.forEach((r, i) => {
-    if (!Number.isFinite(ys[i])) return;
-    ctx.beginPath(); ctx.arc(X(xs[i]), Y(ys[i]), 4, 0, Math.PI * 2); ctx.fill();
-  });
+  const dots = vis.length <= 150;
+  for (let i = 0; i < vis.length; i++) {
+    if (!Number.isFinite(ys[i])) continue;
+    if (!dots && !vis[i].clip) continue;
+    ctx.fillStyle = vis[i].clip ? bad : accent;
+    ctx.beginPath(); ctx.arc(X(xs[i]), Y(ys[i]), vis[i].clip ? 3.5 : 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
 }
 
 // ---------- Export ----------
 function csvText() {
-  const base = results.length ? results[0].R : 0;
-  const rows = results.map(r => [r.idx, r.t, r.I, r.R, base > 0 && r.R > 0 ? ((r.R - base) / base * 100).toFixed(3) : ""].join(","));
-  return "measurement,time_s,current_uA,resistance_ohm,delta_R_pct\n" + rows.join("\n") + "\n";
+  const rows = results.map(r => [r.idx, r.t, r.f, r.vpp.toFixed(3), r.ipk, r.ph, Number.isFinite(zOf(r)) ? zOf(r).toFixed(3) : "", r.rng, r.clip ? 1 : 0].join(","));
+  return "measurement,time_s,freq_hz,vpp_V,current_peak_uA,phase_deg,impedance_ohm,range,saturated\n" + rows.join("\n") + "\n";
 }
 function csvName() {
   const d = new Date(), p = n => String(n).padStart(2, "0");
-  return `dep_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+  return `ac_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
 }
 async function saveCsv() {
   const name = csvName();
@@ -425,41 +461,50 @@ function buildFields() {
   for (const p of PARAMS) {
     const wrap = document.createElement("div");
     wrap.className = "field";
-    wrap.innerHTML = `<label for="f_${p.key}">${p.label}</label>
-      <input id="f_${p.key}" type="number" inputmode="numeric" min="${p.min}" max="${p.max}" step="1" value="${p.def}">
-      <span class="unit">${p.unit}</span>
-      <span class="help">${p.help} (${p.min}–${p.max})</span>`;
+    const ctl = p.options
+      ? `<select id="f_${p.key}">${p.options.map(o => `<option value="${o.v}">${o.label}</option>`).join("")}</select>`
+      : `<input id="f_${p.key}" type="number" inputmode="numeric" min="${p.min}" max="${p.max}" step="1" value="${p.def}">`;
+    wrap.innerHTML = `<label for="f_${p.key}">${p.label}</label>${ctl}<span class="unit">${p.unit}</span>
+      <span class="help">${p.help}${p.options ? "" : ` (${p.min}–${p.max})`}</span>`;
     (p.group === "main" ? $("fieldsMain") : $("fieldsAdv")).appendChild(wrap);
-    wrap.querySelector("input").addEventListener("input", e => {
+    wrap.querySelector(p.options ? "select" : "input").addEventListener("input", e => {
       const v = parseInt(e.target.value, 10);
       if (Number.isFinite(v)) values[p.key] = v;
-      updateEstimate();
+      syncLive(); updateEstimate();
     });
   }
-  updateEstimate();
+  $("f_range").value = values.range;
+  syncLive(); updateEstimate();
 }
 function setValue(key, v) {
   if (!(key in values) || !Number.isFinite(v)) return;
   values[key] = v;
   const el = $("f_" + key);
   if (el) el.value = v;
-  updateEstimate();
+  syncLive(); updateEstimate();
+}
+function syncLive() {
+  if (document.activeElement !== $("liveF")) $("liveF").value = values.freq_hz;
+  if (document.activeElement !== $("liveA")) $("liveA").value = values.amp_mv;
 }
 function updateEstimate() {
   const v = values;
-  const perMeas = v.run_ms / 1000 + 2;            // ~2 s of script overhead per measurement
-  const total = v.pre_s + (v.cycles + 1) * perMeas + v.cycles * (v.dep_s + v.settle_s);
-  $("estimate").textContent = `Estimated run time ≈ ${fmtClock(total)} (${v.cycles + 1} measurements, ${v.cycles} × ${v.dep_s} s DEP).`;
+  const cyc = Math.round(v.freq_hz * v.win_ms / 1000);
+  $("estimate").textContent = `Each point averages ≈ ${cyc} sine cycle${cyc === 1 ? "" : "s"} (${v.freq_hz} Hz × ${v.win_ms} ms), ≈ ${(1000 / v.win_ms).toFixed(1)} points/s. `
+    + (v.dur_s ? `Run length ${fmtClock(v.dur_s)}.` : "Runs until stopped.");
+}
+function clampParam(p, v) {
+  if (!Number.isFinite(v)) v = p.def;
+  return Math.min(p.max, Math.max(p.min, v));
 }
 function readInputs() {
   const out = {};
   for (const p of PARAMS) {
-    let v = parseInt($("f_" + p.key).value, 10);
-    if (!Number.isFinite(v)) v = p.def;
-    v = Math.min(p.max, Math.max(p.min, v));
-    out[p.key] = v;
+    const v = clampParam(p, parseInt($("f_" + p.key).value, 10));
+    out[p.key] = v; values[p.key] = v;
     $("f_" + p.key).value = v;
   }
+  syncLive();
   return out;
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -470,6 +515,17 @@ async function sendSettings() {
     for (const p of PARAMS) { await send(`SET ${p.key} ${vals[p.key]}\n`); await sleep(120); }
     $("settingsMsg").textContent = "Settings saved to the device.";
   } catch (e) { $("settingsMsg").textContent = "Send failed: " + e.message; }
+}
+// Live frequency / amplitude change (works during a run)
+async function applyLive() {
+  const fP = PARAMS.find(p => p.key === "freq_hz"), aP = PARAMS.find(p => p.key === "amp_mv");
+  const f = clampParam(fP, parseInt($("liveF").value, 10));
+  const a = clampParam(aP, parseInt($("liveA").value, 10));
+  values.freq_hz = f; values.amp_mv = a;
+  $("f_freq_hz").value = f; $("f_amp_mv").value = a;
+  syncLive(); $("liveF").value = f; $("liveA").value = a; updateEstimate();
+  try { await send(`SET freq_hz ${f}\n`); await sleep(60); await send(`SET amp_mv ${a}\n`); }
+  catch (e) { log("Send failed: " + e.message); }
 }
 
 // ---------- Tabs & wiring ----------
@@ -485,25 +541,21 @@ $("tabSettings").addEventListener("click", () => showTab("settings"));
 $("connectBtn").addEventListener("click", () => (connected() ? device.gatt.disconnect() : connect()));
 $("startBtn").addEventListener("click", async () => {
   if (results.length && !confirm("Clear the existing data and start a new run?")) return;
-  results = []; deps = []; renderResults(); draw();
+  results = []; renderResults(); draw();
   try { await send("START\n"); setStage("Starting…"); } catch (e) { setState("Send failed: " + e.message, true); }
 });
 $("stopBtn").addEventListener("click", async () => { try { await send("STOP\n"); } catch (_) {} });
+$("applyBtn").addEventListener("click", applyLive);
 $("readBtn").addEventListener("click", async () => { $("settingsMsg").textContent = "Reading…"; await send("GET\n"); setTimeout(() => $("settingsMsg").textContent = "Loaded from device.", 600); });
 $("sendBtn").addEventListener("click", sendSettings);
 $("defaultsBtn").addEventListener("click", async () => { await send("DEFAULTS\n"); $("settingsMsg").textContent = "Defaults restored."; });
 $("saveBtn").addEventListener("click", saveCsv);
 $("copyBtn").addEventListener("click", copyCsv);
-$("clearBtn").addEventListener("click", () => { results = []; deps = []; renderResults(); draw(); });
+$("clearBtn").addEventListener("click", () => { results = []; renderResults(); draw(); });
 $("metric").addEventListener("change", draw);
+$("span").addEventListener("change", draw);
 window.addEventListener("resize", draw);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && connected()) requestWakeLock(); });
-
-// Countdown + growing DEP band
-setInterval(() => {
-  if (run.stageEnd) renderStage();
-  if (run.stageKind === "dep") draw();
-}, 500);
 
 buildFields();
 renderResults();
