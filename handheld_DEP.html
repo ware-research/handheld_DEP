@@ -177,16 +177,16 @@ const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";   // notifications from d
 const RANGES = [
   { v: 0, label: "Auto" },
   { v: 1, label: "1 MΩ" },
-  { v: 2, label: "100 kΩ" },
-  { v: 3, label: "10 kΩ" },
-  { v: 4, label: "1 kΩ" },
-  { v: 5, label: "100 Ω" },
+  { v: 2, label: "500 kΩ" },
+  { v: 3, label: "120 kΩ" },
+  { v: 4, label: "40 kΩ" },
+  { v: 5, label: "20 kΩ" },
 ];
 
 // Must match the parameter table in the firmware.
 const PARAMS = [
   { key: "freq_hz", label: "Frequency",           unit: "Hz",  min: 1000, max: 100000, def: 1000, group: "main", help: "Sine frequency." },
-  { key: "amp_mv",  label: "Amplitude (peak-to-peak)", unit: "mV", min: 5000, max: 10000, def: 5000, group: "main", help: "Output swing, centered on 0 V." },
+  { key: "amp_mv",  label: "Amplitude (peak-to-peak)", unit: "mV", min: 5000, max: 7400, def: 5000, group: "main", help: "Target voltage across the sample, centered on 0 V. The device may lower it when the sample draws too much current. The plot and table use the measured value." },
   { key: "dur_s",   label: "Run duration",        unit: "s",   min: 0, max: 86400,      def: 0,    group: "main", help: "0 = run until Stop is pressed." },
   { key: "win_ms",  label: "Measurement window",  unit: "ms",  min: 10, max: 10000,     def: 100,  group: "adv",  help: "Lock-in integration time per reported point. The firmware rounds to a whole number of sine cycles. Longer = less noise, slower updates." },
   { key: "range",   label: "Current range",       unit: "",    min: 0, max: RANGES.length - 1, def: 0, group: "adv", options: RANGES, help: "Transimpedance feedback resistor. Auto picks the best range from the signal level." },
